@@ -13,10 +13,12 @@
 
 ## 📝 Table of Contents
 
-- [Case](#case)
-- [Installation](#installation)
-- [Data Recovery](#data_recovery)
-- [Excersises](#excersises)
+- [📝 Table of Contents](#-table-of-contents)
+- [🤓 Case ](#-case-)
+  - [ERD - Diagram ](#erd---diagram-)
+- [🛠️ Docker Installation ](#️-docker-installation-)
+- [📚 Recover the data to your machine ](#-recover-the-data-to-your-machine-)
+- [📊 Excersises ](#-excersises-)
 
 ## 🤓 Case <a name = "case"></a>
 
@@ -57,6 +59,7 @@ create database nerdery_challenge;
 ```
 
 5. Close the database connection:
+
 ```
 \q
 ```
@@ -79,83 +82,170 @@ Now it's your turn to write SQL queries to achieve the following results (You ne
 1. Total money of all the accounts group by types.
 
 ```
-Your query here
+SELECT a.type, SUM(a.mount) 
+FROM accounts a 
+GROUP BY a.type;
 ```
-
 
 2. How many users with at least 2 `CURRENT_ACCOUNT`.
 
 ```
-Your query here
+SELECT count(*) 
+FROM(
+    SELECT u.name, count(a.id) AS current_accounts 
+    FROM users u 
+    LEFT JOIN accounts a ON a.user_id = u.id AND a.type = 'CURRENT_ACCOUNT' 
+    GROUP BY u.name 
+    HAVING count(a.id) >= 2
+    ) AS total_people;
 ```
-
 
 3. List the top five accounts with more money.
 
 ```
-Your query here
+SELECT a.id, a.mount
+FROM accounts a 
+ORDER BY a.mount DESC 
+LIMIT 5;
 ```
-
 
 4. Get the three users with the most money after making movements.
 
 ```
-Your query here
+SELECT
+    u.name, 
+    (
+        sum(a.mount) +
+        sum(
+            CASE
+                WHEN t.type = 'IN'  THEN  t.mount
+                WHEN t.type = 'OUT' THEN (t.mount * -1)
+                WHEN t.type = 'TRANSFER' AND t.account_FROM = a.id THEN (t.mount * -1)
+                WHEN t.type = 'TRANSFER' AND t.account_to = a.id THEN t.mount
+                else (t.mount * -1)
+            END
+        )
+    ) AS total_amount
+FROM users u 
+LEFT JOIN accounts a ON a.user_id = u.id 
+LEFT JOIN movements t ON t.account_FROM = a.id or t.account_to = a.id 
+GROUP BY u.name
+ORDER BY total_amount DESC
+LIMIT 3;
 ```
-
 
 5. In this part you need to create a transaction with the following steps:
 
-    a. First, get the ammount for the account `3b79e403-c788-495a-a8ca-86ad7643afaf` and `fd244313-36e5-4a17-a27c-f8265bc46590` after all their movements.
-    b. Add a new movement with the information:
-        from: `3b79e403-c788-495a-a8ca-86ad7643afaf` make a transfer to `fd244313-36e5-4a17-a27c-f8265bc46590`
-        mount: 50.75
+   a. First, get the ammount for the account `3b79e403-c788-495a-a8ca-86ad7643afaf` and `fd244313-36e5-4a17-a27c-f8265bc46590` after all their movements.
 
-    c. Add a new movement with the information:
-        from: `3b79e403-c788-495a-a8ca-86ad7643afaf` 
-        type: OUT
-        mount: 731823.56
+   ```
+   -- Function to calculate current amount FROM an account using only its ID
+   CREATE OR REPLACE FUNCTION get_current_balance(p_account_id UUID)
+   RETURNS FLOAT AS $$
+   DECLARE
+       v_balance FLOAT;
+   BEGIN
+           SELECT 
+               (a.mount + 
+                   SUM(
+                       case 
+                           WHEN t.type = 'IN' or (t.type = 'TRANSFER' AND t.account_to = a.id) THEN t.mount
+                           WHEN t.type = 'OUT' or (t.type = 'TRANSFER' AND t.account_FROM = a.id) THEN -t.mount
+                           else 0
+                       END
+                   )
+               ) 
+           INTO v_balance
+           FROM accounts a 
+           LEFT JOIN movements t ON a.id IN (t.account_FROM , t.account_to)
+           WHERE a.id = p_account_id
+           GROUP BY a.id , a.mount;
+           IF v_balance IS NULL THEN
+               SELECT mount INTO v_balance FROM accounts WHERE id = p_account_id;
+           END IF;
+           RETURN coalesce(v_balance, 0);
+   END;
+   $$ language plpgsql;
+   ```
 
-        * Note: if the account does not have enough money you need to reject this insert and make a rollback for the entire transaction
-    
-    d. Put your answer here if the transaction fails(YES/NO):
-    ```
-        Your answer
-    ```
+   b. Add a new movement with the information: from: `3b79e403-c788-495a-a8ca-86ad7643afaf`make a transfer to`fd244313-36e5-4a17-a27c-f8265bc46590`
+   mount: 50.75
 
-    e. If the transaction fails, make the correction on step _c_ to avoid the failure:
-    ```
-        Your query
-    ```
+   ```
+   DO $$
+   BEGIN
+           IF get_current_balance('3b79e403-c788-495a-a8ca-86ad7643afaf') < 50.75 THEN
+               RAISE EXCEPTION 'Insuf. current amount on account';
+           END if;
+           INSERT INTO movements(id , mount , account_FROM , account_to , type , created_at , updated_at)
+           VALUES (gen_rANDom_uuid() , 50.75 , '3b79e403-c788-495a-a8ca-86ad7643afaf' , 'fd244313-36e5-4a17-a27c-f8265bc46590' , 'TRANSFER' , now() , now()); 
+   END $$;
+   ```
 
-    f. Once the transaction is correct, make a commit
-    ```
-        Your query
-    ```
+   c. Add a new movement with the information: from: `3b79e403-c788-495a-a8ca-86ad7643afaf`
+   type: OUT
+   mount: 731823.56
 
-    e. How much money the account `fd244313-36e5-4a17-a27c-f8265bc46590` have:
-    ```
-        Your query
-    ```
+   * Note: if the account does not have enough money you need to reject this insert and make a rollback for the entire transaction
 
+   d. Put your answer here if the transaction fails(YES/NO):
 
+   ```
+    Yes, the transactions fails caused by insufficient current amount.
+   ```
+
+   e. If the transaction fails, make the correction on step _c_ to avoid the failure:
+
+   ```
+   -- Change the value from 731823.56 to 1823.56
+   BEGIN
+        IF get_current_balance('3b79e403-c788-495a-a8ca-86ad7643afaf') < 1823.56 THEN
+            RAISE EXCEPTION 'Insuf. current amount on account';
+        END IF;
+        INSERT INTO movements(id , mount , account_FROM, type , created_at , updated_at)
+        VALUES (gen_rANDom_uuid() , 1823.56, '3b79e403-c788-495a-a8ca-86ad7643afaf', 'OUT' , now() , now()); 
+   END $$;
+   ```
+
+   f. Once the transaction is correct, make a commit
+
+   ```
+   COMMIT;
+   ```
+
+   e. How much money the account `fd244313-36e5-4a17-a27c-f8265bc46590` have:
+
+   ```
+   --- RAISE NOTICE 'Current amount: %' , get_current_balance('fd244313-36e5-4a17-a27c-f8265bc46590');
+   Current amount: 3265.72
+   ```
 6. All the movements and the user information with the account `3b79e403-c788-495a-a8ca-86ad7643afaf`
 
 ```
-Your query here
+SELECT m.*, u.name , u.last_name , u.email 
+FROM movements m 
+LEFT JOIN accounts a ON a.id in (m.account_FROM , m.account_to)
+LEFT JOIN users u ON a.user_id = u.id
+WHERE a.id = '3b79e403-c788-495a-a8ca-86ad7643afaf';
 ```
-
 
 7. The name and email of the user with the highest money in all his/her accounts
 
 ```
-Your query here
+SELECT u.name , u.email
+FROM users u
+LEFT JOIN accounts a ON a.user_id = u.id
+GROUP BY u.id
+ORDER BY sum(a.mount) DESC limit 1;
 ```
-
 
 8. Show all the movements for the user `Kaden.Gusikowski@gmail.com` order by account type and created_at on the movements table
 
 ```
-Your query here
+SELECT m.*, u.email, a.type , a.created_at 
+FROM movements m 
+INNER JOIN accounts a ON m.account_FROM = a.id or m.account_to = a.id 
+INNER JOIN users u ON u.id = a.user_id 
+WHERE u.email = 'Kaden.Gusikowski@gmail.com' 
+ORDER BY a.type ASC, a.created_at DESC;
 ```
-
