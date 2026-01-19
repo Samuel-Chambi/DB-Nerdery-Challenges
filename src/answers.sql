@@ -20,23 +20,27 @@ ORDER BY a.mount DESC
 LIMIT 5;
 -- 4
 SELECT
-    u.name, 
-    (
-        sum(a.mount) +
-        sum(
-            CASE
-                WHEN t.type = 'IN'  THEN  t.mount
-                WHEN t.type = 'OUT' THEN (t.mount * -1)
-                WHEN t.type = 'TRANSFER' AND t.account_FROM = a.id THEN (t.mount * -1)
-                WHEN t.type = 'TRANSFER' AND t.account_to = a.id THEN t.mount
-                else (t.mount * -1)
-            END
-        )
-    ) AS total_amount
-FROM users u 
-LEFT JOIN accounts a ON a.user_id = u.id 
-LEFT JOIN movements t ON t.account_FROM = a.id or t.account_to = a.id 
-GROUP BY u.name
+    u.name,
+    SUM(a.mount + COALESCE(movs.net_change, 0)) AS total_amount
+FROM users u
+JOIN accounts a ON u.id = a.user_id
+LEFT JOIN (
+    SELECT 
+        account_id,
+        SUM(delta) as net_change
+    FROM (
+        SELECT account_to as account_id, mount as delta 
+        FROM movements WHERE type = 'TRANSFER'
+        UNION ALL
+        SELECT account_from as account_id, -mount as delta 
+        FROM movements WHERE type IN ('OUT', 'TRANSFER', 'OTHER')
+        UNION ALL
+        SELECT account_from as account_id, mount as delta 
+        FROM movements WHERE type = 'IN'
+    ) t
+    GROUP BY account_id
+) movs ON a.id = movs.account_id
+GROUP BY u.id, u.name
 ORDER BY total_amount DESC
 LIMIT 3;
 -- 5
@@ -51,14 +55,14 @@ BEGIN
                 SUM(
                     case 
                         WHEN t.type = 'IN' or (t.type = 'TRANSFER' AND t.account_to = a.id) THEN t.mount
-                        WHEN t.type = 'OUT' or (t.type = 'TRANSFER' AND t.account_FROM = a.id) THEN -t.mount
+                        WHEN t.type = 'OUT' or (t.type = 'TRANSFER' AND t.account_from = a.id) THEN -t.mount
                         else 0
                     END
                 )
             ) 
         INTO v_balance
         FROM accounts a 
-        LEFT JOIN movements t ON a.id IN (t.account_FROM , t.account_to)
+        LEFT JOIN movements t ON a.id IN (t.account_from , t.account_to)
         WHERE a.id = p_account_id
         GROUP BY a.id , a.mount;
         IF v_balance IS NULL THEN
@@ -75,7 +79,7 @@ BEGIN
         IF get_current_balance('3b79e403-c788-495a-a8ca-86ad7643afaf') < 50.75 THEN
             RAISE EXCEPTION 'Insuf. current amount on account';
         END if;
-        INSERT INTO movements(id , mount , account_FROM , account_to , type , created_at , updated_at)
+        INSERT INTO movements(id , mount , account_from , account_to , type , created_at , updated_at)
         VALUES (gen_rANDom_uuid() , 50.75 , '3b79e403-c788-495a-a8ca-86ad7643afaf' , 'fd244313-36e5-4a17-a27c-f8265bc46590' , 'TRANSFER' , now() , now()); 
 END $$;
 
@@ -84,7 +88,7 @@ BEGIN
         IF get_current_balance('3b79e403-c788-495a-a8ca-86ad7643afaf') < 1823.56 THEN
             RAISE EXCEPTION 'Insuf. current amount on account';
         END IF;
-        INSERT INTO movements(id , mount , account_FROM, type , created_at , updated_at)
+        INSERT INTO movements(id , mount , account_from, type , created_at , updated_at)
         VALUES (gen_rANDom_uuid() , 1823.56, '3b79e403-c788-495a-a8ca-86ad7643afaf', 'OUT' , now() , now()); 
 END $$;
 
@@ -92,7 +96,7 @@ COMMIT;
 -- 6
 SELECT m.*, u.name , u.last_name , u.email 
 FROM movements m 
-LEFT JOIN accounts a ON a.id in (m.account_FROM , m.account_to)
+LEFT JOIN accounts a ON a.id in (m.account_from , m.account_to)
 LEFT JOIN users u ON a.user_id = u.id
 WHERE a.id = '3b79e403-c788-495a-a8ca-86ad7643afaf';
 -- 7
@@ -104,7 +108,7 @@ ORDER BY sum(a.mount) DESC limit 1;
 -- 8 
 SELECT m.*, u.email, a.type , a.created_at 
 FROM movements m 
-INNER JOIN accounts a ON m.account_FROM = a.id or m.account_to = a.id 
+INNER JOIN accounts a ON m.account_from = a.id or m.account_to = a.id 
 INNER JOIN users u ON u.id = a.user_id 
 WHERE u.email = 'Kaden.Gusikowski@gmail.com' 
 ORDER BY a.type ASC, a.created_at DESC;
