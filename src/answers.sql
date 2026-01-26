@@ -8,30 +8,31 @@ SELECT COUNT(*) as employees_without_bosses
 FROM employees 
 WHERE supervisor_id IS NULL;
 -- 3
-SELECT c.name, d.address, d.total_employees 
-FROM countries c INNER JOIN (
-    SELECT o.id , o.country_id , o.address, count(e.id) AS total_employees 
-    FROM offices o LEFT JOIN employees e ON e.office_id = o.id 
-    GROUP BY o.id, o.address, o.country_id
-) AS d ON c.id = d.country_id 
-ORDER BY d.total_employees DESC, d.id DESC 
+SELECT c.name , o.address, COUNT(e.id) as count_employees 
+FROM employees e 
+LEFT JOIN offices o ON e.office_id = o.id
+LEFT JOIN countries c ON o.country_id = c.id
+GROUP BY c.name, o.id
+ORDER BY count_employees DESC, c.name 
 LIMIT 5;
 -- 4
-SELECT supervisor_id, count(*) AS total_subordinates 
-FROM employees 
-WHERE supervisor_id IS NOT NULL 
-GROUP BY supervisor_id 
+SELECT a.supervisor_id, CONCAT(b.first_name, ' ', b.last_name) as full_name, count(*) AS total_subordinates 
+FROM employees a
+LEFT JOIN employees b ON a.supervisor_id = b.id
+WHERE a.supervisor_id IS NOT NULL 
+GROUP BY a.supervisor_id, b.id
 ORDER BY count(*) DESC
 LIMIT 3;
 -- 5
-SELECT COUNT(*) AS list_of_office
-FROM offices INNER JOIN states 
-ON states.id = offices.state_id
-WHERE states.name = 'Colorado';
+SELECT COUNT(*) AS offices_count
+FROM offices o
+LEFT JOIN states s ON s.id = o.state_id
+LEFT JOIN countries c ON c.id = s.country_id
+WHERE s.name = 'Colorado' and c.name = 'United States';
 -- 6
 SELECT name, count(e.*) AS total_employees
-FROM offices INNER JOIN employees e 
-ON offices.id = e.office_id 
+FROM offices 
+LEFT JOIN employees e ON offices.id = e.office_id 
 GROUP BY name 
 ORDER BY total_employees DESC;
 -- 7
@@ -50,13 +51,13 @@ ORDER BY total_employees DESC;
  LIMIT 1);
 -- 8
 SELECT 
-    e.uuid, CONCAT(e.first_name , ' ' , e.last_name) as full_name, e.email, e.job_title,
+    e.uuid, CONCAT(e.first_name, ' ', e.last_name) as full_name, e.email, e.job_title,
     o.name AS company, 
     c.name AS country_name, 
     s.name AS state_name,
     ss.first_name AS supervisor
 FROM employees e
-INNER JOIN employees ss ON e.supervisor_id = ss.id
+LEFT JOIN employees ss ON e.supervisor_id = ss.id
 LEFT JOIN offices o ON e.office_id = o.id
 LEFT JOIN states s ON o.state_id = s.id
 LEFT JOIN countries c ON s.country_id = c.id;
