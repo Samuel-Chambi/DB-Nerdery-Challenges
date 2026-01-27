@@ -10,7 +10,7 @@ FROM(
     SELECT u.name, count(a.id) AS current_accounts 
     FROM users u 
     LEFT JOIN accounts a ON a.user_id = u.id AND a.type = 'CURRENT_ACCOUNT' 
-    GROUP BY u.name 
+    GROUP BY u.id 
     HAVING count(a.id) >= 2
     ) AS total_people;
 -- 3
@@ -19,30 +19,30 @@ FROM accounts a
 ORDER BY a.mount DESC 
 LIMIT 5;
 -- 4
+WITH normalized_movements AS (
+    SELECT account_to as account_id, mount as delta 
+    FROM movements WHERE type = 'TRANSFER'
+    UNION ALL
+    SELECT account_from as account_id, -mount as delta 
+    FROM movements WHERE type IN ('OUT', 'TRANSFER', 'OTHER')
+    UNION ALL
+    SELECT account_from as account_id, mount as delta 
+    FROM movements WHERE type = 'IN'
+),
+account_changes AS (
+    SELECT n.account_id , sum(delta) AS net_change
+    FROM normalized_movements n 
+    GROUP BY n.account_id
+)
 SELECT
     u.name,
-    SUM(a.mount + COALESCE(movs.net_change, 0)) AS total_amount
+    SUM(a.mount + COALESCE(ac.net_change , 0)) as current_amount
 FROM users u
 JOIN accounts a ON u.id = a.user_id
-LEFT JOIN (
-    SELECT 
-        account_id,
-        SUM(delta) as net_change
-    FROM (
-        SELECT account_to as account_id, mount as delta 
-        FROM movements WHERE type = 'TRANSFER'
-        UNION ALL
-        SELECT account_from as account_id, -mount as delta 
-        FROM movements WHERE type IN ('OUT', 'TRANSFER', 'OTHER')
-        UNION ALL
-        SELECT account_from as account_id, mount as delta 
-        FROM movements WHERE type = 'IN'
-    ) t
-    GROUP BY account_id
-) movs ON a.id = movs.account_id
-GROUP BY u.id, u.name
-ORDER BY total_amount DESC
-LIMIT 3;
+LEFT JOIN account_changes ac ON ac.account_id = a.id
+GROUP BY u.id
+ORDER BY current_amount DESC
+LIMIT 3; 
 -- 5
 -- Function to calculate current amount FROM an account using only its ID
 CREATE OR REPLACE FUNCTION get_current_balance(p_account_id UUID)
@@ -54,7 +54,7 @@ BEGIN
             (a.mount + 
                 SUM(
                     case 
-                        WHEN t.type = 'IN' or (t.type = 'TRANSFER' AND t.account_to = a.id) THEN t.mount
+                        WHEN t.type = 'IN'  or (t.type = 'TRANSFER' AND t.account_to = a.id) THEN t.mount
                         WHEN t.type = 'OUT' or (t.type = 'TRANSFER' AND t.account_from = a.id) THEN -t.mount
                         else 0
                     END
@@ -68,7 +68,7 @@ BEGIN
         IF v_balance IS NULL THEN
             SELECT mount INTO v_balance FROM accounts WHERE id = p_account_id;
         END IF;
-        RETURN coalesce(v_balance, 0);
+        RETURN COALESCE(v_balance, 0);
 END;
 $$ language plpgsql;
 
@@ -80,16 +80,17 @@ BEGIN
             RAISE EXCEPTION 'Insuf. current amount on account';
         END if;
         INSERT INTO movements(id , mount , account_from , account_to , type , created_at , updated_at)
-        VALUES (gen_rANDom_uuid() , 50.75 , '3b79e403-c788-495a-a8ca-86ad7643afaf' , 'fd244313-36e5-4a17-a27c-f8265bc46590' , 'TRANSFER' , now() , now()); 
+        VALUES (gen_random_uuid() , 50.75 , '3b79e403-c788-495a-a8ca-86ad7643afaf' , 'fd244313-36e5-4a17-a27c-f8265bc46590' , 'TRANSFER' , now() , now()); 
 END $$;
 
 DO $$
 BEGIN
+        -- Using '1823.56' value instead '731823.56' to avoid calling the rollback
         IF get_current_balance('3b79e403-c788-495a-a8ca-86ad7643afaf') < 1823.56 THEN
             RAISE EXCEPTION 'Insuf. current amount on account';
         END IF;
         INSERT INTO movements(id , mount , account_from, type , created_at , updated_at)
-        VALUES (gen_rANDom_uuid() , 1823.56, '3b79e403-c788-495a-a8ca-86ad7643afaf', 'OUT' , now() , now()); 
+        VALUES (gen_random_uuid() , 1823.56, '3b79e403-c788-495a-a8ca-86ad7643afaf', 'OUT' , now() , now()); 
 END $$;
 
 COMMIT;
@@ -100,15 +101,20 @@ LEFT JOIN accounts a ON a.id in (m.account_from , m.account_to)
 LEFT JOIN users u ON a.user_id = u.id
 WHERE a.id = '3b79e403-c788-495a-a8ca-86ad7643afaf';
 -- 7
-SELECT u.name , u.email
-FROM users u
+-- Use the function defined previously to calculate total_balance for each user
+SELECT 
+    CONCAT(u.name, ' ', u.last_name) AS full_name, 
+    u.email, 
+    SUM(get_current_balance(a.id)) AS total_balance
+FROM users u 
 LEFT JOIN accounts a ON a.user_id = u.id
 GROUP BY u.id
-ORDER BY sum(a.mount) DESC limit 1;
--- 8 
-SELECT m.*, u.email, a.type , a.created_at 
-FROM movements m 
-INNER JOIN accounts a ON m.account_from = a.id or m.account_to = a.id 
-INNER JOIN users u ON u.id = a.user_id 
-WHERE u.email = 'Kaden.Gusikowski@gmail.com' 
-ORDER BY a.type ASC, a.created_at DESC;
+ORDER BY total_balance DESC
+LIMIT 1;
+-- 8
+SELECT m.*, u.email, a.type, a.created_at
+FROM users u 
+INNER JOIN accounts a ON a.user_id = u.id 
+INNER JOIN movements m ON a.id IN (m.account_from, m.account_to)
+WHERE u.email = 'Kaden.Gusikowski@gmail.com'
+ORDER BY a.type ASC, a.created_at DESC; 

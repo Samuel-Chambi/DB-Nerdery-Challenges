@@ -95,7 +95,7 @@ FROM(
     SELECT u.name, count(a.id) AS current_accounts 
     FROM users u 
     LEFT JOIN accounts a ON a.user_id = u.id AND a.type = 'CURRENT_ACCOUNT' 
-    GROUP BY u.name 
+    GROUP BY u.id 
     HAVING count(a.id) >= 2
     ) AS total_people;
 ```
@@ -112,26 +112,30 @@ LIMIT 5;
 4. Get the three users with the most money after making movements.
 
 ```
+WITH normalized_movements AS (
+    SELECT account_to as account_id, mount as delta 
+    FROM movements WHERE type = 'TRANSFER'
+    UNION ALL
+    SELECT account_from as account_id, -mount as delta 
+    FROM movements WHERE type IN ('OUT', 'TRANSFER', 'OTHER')
+    UNION ALL
+    SELECT account_from as account_id, mount as delta 
+    FROM movements WHERE type = 'IN'
+),
+account_changes AS (
+    SELECT n.account_id , sum(delta) AS net_change
+    FROM normalized_movements n 
+    GROUP BY n.account_id
+)
 SELECT
-    u.name, 
-    (
-        sum(a.mount) +
-        sum(
-            CASE
-                WHEN t.type = 'IN'  THEN  t.mount
-                WHEN t.type = 'OUT' THEN (t.mount * -1)
-                WHEN t.type = 'TRANSFER' AND t.account_FROM = a.id THEN (t.mount * -1)
-                WHEN t.type = 'TRANSFER' AND t.account_to = a.id THEN t.mount
-                else (t.mount * -1)
-            END
-        )
-    ) AS total_amount
-FROM users u 
-LEFT JOIN accounts a ON a.user_id = u.id 
-LEFT JOIN movements t ON t.account_FROM = a.id or t.account_to = a.id 
-GROUP BY u.name
-ORDER BY total_amount DESC
-LIMIT 3;
+    u.name,
+    SUM(a.mount + COALESCE(ac.net_change , 0)) as current_amount
+FROM users u
+JOIN accounts a ON u.id = a.user_id
+LEFT JOIN account_changes ac ON ac.account_id = a.id
+GROUP BY u.id
+ORDER BY current_amount DESC
+LIMIT 3; 
 ```
 
 5. In this part you need to create a transaction with the following steps:
@@ -232,20 +236,24 @@ WHERE a.id = '3b79e403-c788-495a-a8ca-86ad7643afaf';
 7. The name and email of the user with the highest money in all his/her accounts
 
 ```
-SELECT u.name , u.email
-FROM users u
+-- Use the function defined previously to calculate total_balance for each user
+SELECT 
+    CONCAT(u.name, ' ', u.last_name) AS full_name, 
+    u.email, 
+    SUM(get_current_balance(a.id)) AS total_balance
+FROM users u 
 LEFT JOIN accounts a ON a.user_id = u.id
 GROUP BY u.id
-ORDER BY sum(a.mount) DESC limit 1;
+ORDER BY total_balance DESC
 ```
 
 8. Show all the movements for the user `Kaden.Gusikowski@gmail.com` order by account type and created_at on the movements table
 
 ```
-SELECT m.*, u.email, a.type , a.created_at 
-FROM movements m 
-INNER JOIN accounts a ON m.account_FROM = a.id or m.account_to = a.id 
-INNER JOIN users u ON u.id = a.user_id 
-WHERE u.email = 'Kaden.Gusikowski@gmail.com' 
-ORDER BY a.type ASC, a.created_at DESC;
+SELECT m.*, u.email, a.type, a.created_at
+FROM users u 
+INNER JOIN accounts a ON a.user_id = u.id 
+INNER JOIN movements m ON a.id IN (m.account_from, m.account_to)
+WHERE u.email = 'Kaden.Gusikowski@gmail.com'
+ORDER BY a.type ASC, a.created_at DESC; 
 ```
