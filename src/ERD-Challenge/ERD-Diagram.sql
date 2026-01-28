@@ -108,6 +108,7 @@ CREATE TABLE "cart_items" (
   "cart_id" INT NOT NULL REFERENCES "carts"("id") ON DELETE CASCADE,
   "product_id" INT NOT NULL REFERENCES "products"("id") ON DELETE RESTRICT,
   "quantity" INT NOT NULL check(quantity > 0),
+  "sub_total" DECIMAL(10, 2) NOT NULL check(sub_total >= 0),
   "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -130,7 +131,8 @@ CREATE TABLE "order_items" (
   "product_name" VARCHAR NOT NULL,
   "quantity" INT NOT NULL check(quantity > 0),
   "price" DECIMAL(10, 2) NOT NULL check(price >= 0),
-  "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE "payments" (
@@ -260,6 +262,10 @@ CREATE TRIGGER update_inventory_update_at
 
 CREATE TRIGGER update_orders_update_at
   BEFORE UPDATE ON "orders"
+  FOR EACH ROW EXECUTE FUNCTION auto_update_at_column();
+
+CREATE TRIGGER update_order_items_update_at
+  BEFORE UPDATE ON "order_items"
   FOR EACH ROW EXECUTE FUNCTION auto_update_at_column();
 
 CREATE TRIGGER update_carts_update_at
